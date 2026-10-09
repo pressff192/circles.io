@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cells.io</title>
+<style>
+:root{--bg:#cfd8de;--panel:rgba(255,255,255,.93);--fg:#1b2733;--muted:#5d6f80;--accent:#2f80ed;--hl:#fff3c4;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#06090d;--panel:rgba(28,34,42,.94);--fg:#e8eef5;--muted:#9aa9b8;--hl:#4a4320}}
+:root[data-theme="dark"]{--bg:#06090d;--panel:rgba(28,34,42,.94);--fg:#e8eef5;--muted:#9aa9b8;--hl:#4a4320}
+html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-user-select:none;user-select:none;touch-action:none}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+.hud{position:fixed;background:var(--panel);border-radius:12px;padding:8px 12px;font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.18)}
+#st{left:10px;top:calc(env(safe-area-inset-top,0px) + 10px)}
+#sc{left:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);font-weight:600;font-size:15px}
+#lbw{right:10px;top:calc(env(safe-area-inset-top,0px) + 10px);min-width:150px;max-width:46vw}
+#lbw h4{margin:0 0 4px;font-size:13px;text-align:center}
+#lb{margin:0;padding:0 0 0 18px;font-size:12px}
+#lb li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 3px;border-radius:4px}
+#lb li.me{background:var(--hl);font-weight:700}
+button.hud{border:0;color:var(--fg);cursor:pointer;font-size:18px;line-height:1;padding:9px 11px}
+#th{right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px)}
+#ov{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(10,20,30,.5);padding:16px}
+.card{background:var(--panel);border-radius:18px;padding:24px;width:min(360px,100%);text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+.card h1{margin:0 0 4px;font-size:30px}
+.card p{margin:6px 0 14px;color:var(--muted);font-size:14px}
+.card input{width:100%;box-sizing:border-box;font-size:16px;padding:11px 12px;border-radius:10px;border:2px solid var(--muted);background:transparent;color:var(--fg);outline:none;text-align:center;-webkit-user-select:text;user-select:text}
+.card input:focus{border-color:var(--accent)}
+.card button{margin-top:12px;width:100%;font-size:17px;font-weight:700;padding:12px;border:0;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer}
+.card small{display:block;margin-top:12px;color:var(--muted);font-size:12px;line-height:1.4}
+</style>
+<script src="config.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud" id="st">○ Підключення…</div>
+<div class="hud" id="sc">Маса: 0</div>
+<div class="hud" id="lbw"><h4>🏆 Лідери</h4><ol id="lb"></ol></div>
+<button class="hud" id="th" type="button" aria-label="Змінити тему">🌙</button>
+<div id="ov"><div class="card">
+  <h1>🟣 Cells.io</h1>
+  <p id="sub">З'їдай дрібніших, тікай від більших!</p>
+  <input id="nick" maxlength="14" placeholder="Твій нікнейм" autocomplete="off">
+  <button id="go" type="button">Грати</button>
+  <small>Керування: веди мишею або пальцем — клітина рухається за курсором.<br>Частина клітини може виходити за край мапи — у кутку сховатись не вийде.</small>
+</div></div>
+<script>
+(function(){
+"use strict";
+var W=4000,H=4000,NP=1000;
+var COLORS=['#ff6b6b','#feca57','#48dbfb','#1dd1a1','#a55eea','#ff9ff3','#ee5253','#54a0ff','#00d2d3','#ff9f43'];
+var BOTN=['Бульба','Пончик','Кулька','Нуб','Вірус','Борщ','Сало','Хвиля','Зерно','Тінь'];
+var TH={
+  light:{out:'#cfd8de',bd:'#f4fbff',grid:'rgba(0,0,0,.07)',edge:'#e74c3c'},
+  dark:{out:'#06090d',bd:'#141a22',grid:'rgba(255,255,255,.06)',edge:'#ff6b6b'}
+};
+var cv=document.getElementById('c'),ctx=cv.getContext('2d');
+var $=function(i){return document.getElementById(i)};
+var ov=$('ov'),nick=$('nick'),st=$('st'),sc=$('sc'),lb=$('lb'),sub=$('sub'),thb=$('th');
+var vw=0,vh=0,dpr=1;
+function resize(){dpr=Math.min(2,window.devicePixelRatio||1);vw=window.innerWidth;vh=window.innerHeight;cv.width=vw*dpr;cv.height=vh*dpr}
+window.addEventListener('resize',resize);resize();
+
+// ---------- theme ----------
+var theme='';
+try{theme=localStorage.getItem('cells_theme')||''}catch(e){}
+if(theme!=='light'&&theme!=='dark'){
+  theme=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+}
+function applyTheme(){
+  document.documentElement.setAttribute('data-theme',theme);
+  thb.textContent=theme==='dark'?'☀️':'🌙';
+  thb.title=theme==='dark'?'Світла тема':'Темна тема';
+}
+thb.addEventListener('click',function(){
+  theme=theme==='dark'?'light':'dark';
+  try{localStorage.setItem('cells_theme',theme)}catch(e){}
+  applyTheme();
+});
+applyTheme();
+
+// ---------- helpers ----------
+function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+var rnd=function(a,b){return a+Math.random()*(b-a)};
+var clamp=function(v,a,b){return Math.max(a,Math.min(b,v))};
+var radius=function(m){return Math.sqrt(m)*6};
+var spd=function(m){return 320*Math.pow(m,-0.2)};
+var canEat=function(a,b){return a.m>b.m*1.15&&Math.hypot(a.x-b.x,a.y-b.y)<radius(a.m)-radius(b.m)*0.35};
+var isColor=function(c){return typeof c==='string'&&/^#[0-9a-f]{6}$/i.test(c)};
+
+// food: same layout for everybody (seeded); eaten state is local
+var px=new Float32Array(NP),py=new Float32Array(NP),pc=[],back=new Float64Array(NP);
+(function(){var r=rng(20240601);for(var i=0;i<NP;i++){px[i]=r()*W;py[i]=r()*H;pc.push(COLORS[(r()*COLORS.length)|0])}})();
+
+var me={x:W/2,y:H/2,m:20,c:COLORS[(Math.random()*COLORS.length)|0],n:'',alive:false,imm:0};
+var bots=[];
+function mkBot(){return{x:rnd(100,W-100),y:rnd(100,H-100),m:rnd(15,50),c:COLORS[(Math.random()*COLORS.length)|0],n:BOTN[(Math.random()*BOTN.length)|0],tx:W/2,ty:H/2,t:0}}
+for(var bi=0;bi<10;bi++)bots.push(mkBot());
+
+// ---------- networking: 'room' (claude.ai artifact) | 'ws' (own server) | 'off' ----------
+var mode='pending',online=false,room=null,myPeer=null;
+var ws=null,myId=null,wsPeers=new Map(),netRows=null,playersTotal=0,wsDelay=1500;
+var rem=new Map(),othersCount=0;
+var mx=0,my=0,camx=W/2,camy=H/2,zoom=.8,best=0,lastSend=0;
+
+window.addEventListener('pointermove',function(e){mx=e.clientX;my=e.clientY});
+window.addEventListener('pointerdown',function(e){
+  if(e.target&&e.target.closest&&e.target.closest('button,input'))return;
+  mx=e.clientX;my=e.clientY;
+});
+try{var sv=localStorage.getItem('cells_nick');if(sv)nick.value=sv}catch(e){}
+
+function spawn(){
+  me.n=(nick.value.trim()||'Гравець').slice(0,14);
+  try{localStorage.setItem('cells_nick',me.n)}catch(e){}
+  me.x=rnd(300,W-300);me.y=rnd(300,H-300);me.m=20;me.alive=true;me.imm=performance.now()+3000;best=20;
+  camx=me.x;camy=me.y;mx=vw/2;my=vh/2;
+  ov.style.display='none';sendState(true);
+}
+$('go').addEventListener('click',spawn);
+nick.addEventListener('keydown',function(e){if(e.key==='Enter')spawn()});
+
+function tellDied(byKey){
+  if(!byKey)return;
+  try{
+    if(mode==='room'&&room)room.emit('died',{by:byKey,m:Math.round(me.m)}).catch(function(){});
+    else if(mode==='ws'&&ws&&ws.readyState===1)ws.send(JSON.stringify({t:'d',by:byKey}));
+  }catch(e){}
+}
+function die(byName,byKey){
+  if(!me.alive)return;
+  me.alive=false;
+  tellDied(byKey);
+  sendState(true);
+  sub.textContent='Тебе з\u2019їв: '+byName+' · найбільша маса: '+Math.round(best);
+  $('go').textContent='Грати знову';ov.style.display='flex';
+}
+function sendState(force){
+  var t=performance.now();
+  if(!force&&t-lastSend<(me.alive?50:250))return;
+  lastSend=t;
+  try{
+    if(mode==='room'&&room){
+      room.presence({x:Math.round(me.x),y:Math.round(me.y),m:Math.round(me.m*10)/10,c:me.c,n:me.n,a:me.alive?1:0}).catch(function(){});
+    }else if(mode==='ws'&&ws&&ws.readyState===1){
+      ws.send(JSON.stringify({t:'s',x:Math.round(me.x),y:Math.round(me.y),m:Math.round(me.m*10)/10,c:me.c,n:me.n,a:me.alive?1:0}));
+    }
+  }catch(e){}
+}
+
+// ---------- bots ----------
+function botAI(b,dt,t){
+  b.t-=dt;
+  if(b.t<=0){
+    b.t=.3+Math.random()*.3;
+    var tx=null,ty=null,bd=1e9,i,o,d;
+    var cand=bots.filter(function(o){return o!==b});
+    if(me.alive)cand.push(me);
+    for(i=0;i<cand.length;i++){
+      o=cand[i];d=Math.hypot(o.x-b.x,o.y-b.y);if(d>600)continue;
+      if(o.m>b.m*1.15){tx=b.x-(o.x-b.x);ty=b.y-(o.y-b.y);bd=-1;break}
+      if(b.m>o.m*1.2&&d<bd){bd=d;tx=o.x;ty=o.y}
+    }
+    if(tx===null){
+      bd=400;
+      for(i=0;i<NP;i++){if(back[i]>t)continue;d=Math.hypot(px[i]-b.x,py[i]-b.y);if(d<bd){bd=d;tx=px[i];ty=py[i]}}
+    }
+    if(tx===null){tx=b.x+rnd(-300,300);ty=b.y+rnd(-300,300)}
+    b.tx=tx;b.ty=ty;
+  }
+  var dx=b.tx-b.x,dy=b.ty-b.y,L=Math.hypot(dx,dy);
+  if(L>4){var s=spd(b.m)*.9*dt;b.x+=dx/L*s;b.y+=dy/L*s}
+  // the centre may reach the very edge: part of the cell sticks out of the map
+  b.x=clamp(b.x,0,W);b.y=clamp(b.y,0,H);
+}
+
+function eatPellets(o,t,isMe){
+  var r=radius(o.m);
+  for(var i=0;i<NP;i++){
+    if(back[i]>t)continue;
+    var dx=px[i]-o.x,dy=py[i]-o.y;
+    if(dx*dx+dy*dy<r*r){back[i]=t+20000;o.m+=1;if(isMe&&o.m>best)best=o.m}
+  }
+}
+
+// ---------- remote players (from whichever transport is active) ----------
+function remoteTargets(){
+  var out=[],i,p,pr;
+  if(mode==='room'&&room){
+    var ps=room.peers();
+    for(i=0;i<ps.length;i++){
+      p=ps[i];
+      if(p.isMe||p.kind!=='viewer')continue;
+      pr=p.presence;
+      if(!pr||pr.a!==1||typeof pr.x!=='number')continue;
+      out.push({key:p.peer,x:pr.x,y:pr.y,m:pr.m,c:pr.c,n:pr.n});
+    }
+  }else if(mode==='ws'&&online){
+    wsPeers.forEach(function(v,k){out.push({key:k,x:v.x,y:v.y,m:v.m,c:v.c,n:v.n})});
+  }
+  return out;
+}
+
+function step(dt,t){
+  var i,j,b,p;
+  if(me.alive){
+    var ax=mx-vw/2,ay=my-vh/2,d=Math.hypot(ax,ay);
+    if(d>6){var s=spd(me.m)*Math.min(1,d/90)*dt;me.x+=ax/d*s;me.y+=ay/d*s}
+    // centre can reach the edge, so the cell can bulge out of the map and catch cells hiding in corners
+    me.x=clamp(me.x,0,W);me.y=clamp(me.y,0,H);
+    if(me.m>30)me.m-=me.m*.002*dt;
+    eatPellets(me,t,true);
+    if(me.m>20000)me.m=20000;
+    if(me.m>best)best=me.m;
+  }
+  var others=mode==='ws'?Math.max(0,playersTotal-1):othersCount;
+  var want=Math.max(3,10-3*others);
+  while(bots.length<want)bots.push(mkBot());
+  while(bots.length>want)bots.pop();
+  for(i=0;i<bots.length;i++){
+    b=bots[i];botAI(b,dt,t);eatPellets(b,t,false);
+    if(b.m>3000)b.m=3000;
+    if(me.alive){
+      if(canEat(me,b)){me.m+=b.m*.85;bots[i]=mkBot();continue}
+      if(t>me.imm&&canEat(b,me)){b.m+=me.m*.85;die('🤖 '+b.n,null);continue}
+    }
+    for(j=0;j<bots.length;j++){
+      if(i!==j&&canEat(b,bots[j])){b.m+=bots[j].m*.85;bots[j]=mkBot()}
+    }
+  }
+  var seen=new Set(),k=1-Math.exp(-dt*12),cnt=0,tg=remoteTargets();
+  for(i=0;i<tg.length;i++){
+    p=tg[i];
+    var tx=+p.x,ty=+p.y,tm=+p.m;
+    if(!isFinite(tx)||!isFinite(ty)||!isFinite(tm))continue;
+    tx=clamp(tx,0,W);ty=clamp(ty,0,H);tm=clamp(tm,10,20000);
+    seen.add(p.key);cnt++;
+    var q=rem.get(p.key);
+    if(!q){q={x:tx,y:ty,m:tm,c:'#888',n:'',key:p.key};rem.set(p.key,q)}
+    q.x+=(tx-q.x)*k;q.y+=(ty-q.y)*k;q.m+=(tm-q.m)*k;
+    q.c=isColor(p.c)?p.c:'#888';
+    q.n=String(p.n||'Гравець').slice(0,14);
+    if(me.alive&&t>me.imm&&canEat(q,me))die(q.n,q.key);
+  }
+  rem.forEach(function(v,key){if(!seen.has(key))rem.delete(key)});
+  othersCount=cnt;
+  camx+=(me.x-camx)*Math.min(1,dt*8);camy+=(me.y-camy)*Math.min(1,dt*8);
+  var kk=Math.max(.6,Math.min(1,Math.min(vw,vh)/800));
+  var tz=.95*kk*Math.pow(20/Math.max(20,me.m),.2);
+  zoom+=(tz-zoom)*Math.min(1,dt*3);
+}
+
+// ---------- drawing ----------
+function cell(x,y,m,c,n,alpha){
+  var r=radius(m);
+  ctx.globalAlpha=alpha||1;
+  ctx.beginPath();ctx.arc(x,y,r,0,6.2832);ctx.fillStyle=c;ctx.fill();
+  ctx.lineWidth=Math.max(3,r*.06);ctx.strokeStyle='rgba(0,0,0,.25)';ctx.stroke();
+  ctx.globalAlpha=1;
+  if(n){
+    var fs=Math.max(12,r*.38);
+    ctx.font='700 '+fs+'px system-ui,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.lineWidth=fs*.14;ctx.strokeStyle='rgba(0,0,0,.65)';ctx.strokeText(n,x,y);
+    ctx.fillStyle='#fff';ctx.fillText(n,x,y);
+  }
+}
+
+function draw(t){
+  var C=TH[theme];
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle=C.out;ctx.fillRect(0,0,vw,vh);
+  ctx.translate(vw/2,vh/2);ctx.scale(zoom,zoom);ctx.translate(-camx,-camy);
+  var l=camx-vw/2/zoom,rt=camx+vw/2/zoom,tp=camy-vh/2/zoom,bt=camy+vh/2/zoom;
+  ctx.fillStyle=C.bd;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle=C.grid;ctx.lineWidth=1.5;ctx.beginPath();
+  var g=60,x,y,i;
+  for(x=Math.max(0,Math.floor(l/g)*g);x<=Math.min(W,rt);x+=g){ctx.moveTo(x,Math.max(0,tp));ctx.lineTo(x,Math.min(H,bt))}
+  for(y=Math.max(0,Math.floor(tp/g)*g);y<=Math.min(H,bt);y+=g){ctx.moveTo(Math.max(0,l),y);ctx.lineTo(Math.min(W,rt),y)}
+  ctx.stroke();
+  ctx.lineWidth=8;ctx.strokeStyle=C.edge;ctx.strokeRect(0,0,W,H);
+  for(i=0;i<NP;i++){
+    if(back[i]>t||px[i]<l-10||px[i]>rt+10||py[i]<tp-10||py[i]>bt+10)continue;
+    ctx.beginPath();ctx.arc(px[i],py[i],6,0,6.2832);ctx.fillStyle=pc[i];ctx.fill();
+  }
+  var all=[];
+  for(i=0;i<bots.length;i++)all.push({x:bots[i].x,y:bots[i].y,m:bots[i].m,c:bots[i].c,n:bots[i].n,a:1});
+  rem.forEach(function(q){all.push({x:q.x,y:q.y,m:q.m,c:q.c,n:q.n,a:1})});
+  if(me.alive)all.push({x:me.x,y:me.y,m:me.m,c:me.c,n:me.n,a:t<me.imm?.65:1});
+  all.sort(function(a,b){return a.m-b.m});
+  for(i=0;i<all.length;i++){
+    var o=all[i],r=radius(o.m);
+    if(o.x+r<l||o.x-r>rt||o.y+r<tp||o.y-r>bt)continue;
+    cell(o.x,o.y,o.m,o.c,o.n,o.a);
+  }
+}
+
+function ui(){
+  sc.textContent='Маса: '+Math.round(me.alive?me.m:0);
+  if(mode==='off')st.textContent='○ Офлайн · гра з ботами';
+  else if(online){
+    var total=mode==='ws'?playersTotal:othersCount+(me.alive?1:0);
+    st.textContent='● Онлайн · гравців: '+Math.max(total,me.alive?1:0);
+  }else st.textContent='◐ Підключення…';
+  var rows=[];
+  if(me.alive)rows.push({n:me.n,m:me.m,me:1});
+  if(mode==='ws'&&online&&netRows){
+    netRows.forEach(function(r){if(r[0]!==myId)rows.push({n:String(r[1]).slice(0,14),m:+r[2]||0})});
+  }else rem.forEach(function(q){rows.push({n:q.n,m:q.m})});
+  bots.forEach(function(b){rows.push({n:'🤖 '+b.n,m:b.m})});
+  rows.sort(function(a,b){return b.m-a.m});
+  lb.replaceChildren.apply(lb,rows.slice(0,8).map(function(r){
+    var li=document.createElement('li');li.textContent=r.n+' — '+Math.round(r.m);if(r.me)li.className='me';return li;
+  }));
+}
+
+var last=performance.now(),uiT=0;
+function loop(t){
+  var dt=Math.min(.05,(t-last)/1000);last=t;
+  step(dt,t);sendState(false);draw(t);
+  if(t-uiT>400){uiT=t;ui()}
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ---------- transport: own WebSocket server ----------
+function serverURL(){
+  var q='';
+  try{q=new URLSearchParams(location.search).get('server')||''}catch(e){}
+  var u=q||window.GAME_SERVER||'';
+  if(u)return /^wss?:\/\//i.test(u)?u:'';
+  if(location.protocol==='http:'||location.protocol==='https:'){
+    return (location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
+  }
+  return '';
+}
+function connectWS(url){
+  var s;
+  try{s=new WebSocket(url)}catch(e){mode='off';return}
+  ws=s;
+  s.onopen=function(){online=true;wsDelay=1500;sendState(true)};
+  s.onmessage=function(ev){
+    var m;try{m=JSON.parse(ev.data)}catch(e){return}
+    if(!m||typeof m!=='object')return;
+    if(m.t==='hi'){myId=m.id}
+    else if(m.t==='p'&&Array.isArray(m.p)){
+      var nm=new Map();
+      for(var i=0;i<m.p.length;i++){var a=m.p[i];if(Array.isArray(a)&&a.length>=6)nm.set(String(a[0]),{x:a[1],y:a[2],m:a[3],c:a[4],n:a[5]})}
+      wsPeers=nm;playersTotal=+m.c||0;
+    }
+    else if(m.t==='l'&&Array.isArray(m.l)){netRows=m.l}
+    else if(m.t==='k'&&me.alive){me.m=Math.min(20000,me.m+Math.min(+m.m||0,5000)*.85)}
+  };
+  s.onclose=function(){
+    online=false;ws=null;wsPeers=new Map();netRows=null;playersTotal=0;
+    setTimeout(function(){connectWS(url)},wsDelay);
+    wsDelay=Math.min(10000,wsDelay*1.5);
+  };
+  s.onerror=function(){try{s.close()}catch(e){}};
+}
+
+// ---------- transport: claude.ai artifact "room" ----------
+async function connectRoom(){
+  try{
+    var r=await window.claude.use('room');
+    if(!r){mode='off';return}
+    room=r;mode='room';
+    room.onConnection(function(c){online=c},function(){online=false;room=null;mode='off'});
+    room.onPeers(function(ch){
+      for(var i=0;i<ch.peers.length;i++){var p=ch.peers[i];if(p.isMe&&p.sameTab)myPeer=p.peer}
+    },function(){});
+    room.on('died',function(msg){
+      if(msg.isMe||!me.alive)return;
+      var d=msg.data;
+      if(d&&d.by===myPeer&&typeof d.m==='number'){me.m=Math.min(20000,me.m+Math.min(d.m,5000)*.85)}
+    },function(){});
+    sendState(true);
+  }catch(e){room=null;mode='off'}
+}
+
+(function start(){
+  if(window.claude&&window.claude.use){connectRoom();return}
+  var u=serverURL();
+  if(u){mode='ws';connectWS(u)}else mode='off';
+})();
+})();
+</script>
+</body>
+</html>
